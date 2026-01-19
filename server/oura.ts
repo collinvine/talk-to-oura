@@ -20,7 +20,7 @@ export function isOAuthConfigured(): boolean {
 export function getAuthorizationUrl(redirectUri: string, state: string): string {
   const { clientId } = getOAuthConfig();
   const scopes = "personal daily heartrate";
-  
+
   const params = new URLSearchParams({
     response_type: "code",
     client_id: clientId || "",
@@ -28,7 +28,7 @@ export function getAuthorizationUrl(redirectUri: string, state: string): string 
     scope: scopes,
     state: state,
   });
-  
+
   return `${OURA_AUTH_URL}?${params.toString()}`;
 }
 
@@ -38,11 +38,11 @@ export async function exchangeCodeForTokens(code: string, redirectUri: string): 
   expiresIn: number;
 } | null> {
   const { clientId, clientSecret } = getOAuthConfig();
-  
+
   if (!clientId || !clientSecret) {
     return null;
   }
-  
+
   try {
     const response = await axios.post(
       OURA_TOKEN_URL,
@@ -59,7 +59,7 @@ export async function exchangeCodeForTokens(code: string, redirectUri: string): 
         },
       }
     );
-    
+
     return {
       accessToken: response.data.access_token,
       refreshToken: response.data.refresh_token,
@@ -77,11 +77,11 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
   expiresIn: number;
 } | null> {
   const { clientId, clientSecret } = getOAuthConfig();
-  
+
   if (!clientId || !clientSecret) {
     return null;
   }
-  
+
   try {
     const response = await axios.post(
       OURA_TOKEN_URL,
@@ -97,7 +97,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
         },
       }
     );
-    
+
     return {
       accessToken: response.data.access_token,
       refreshToken: response.data.refresh_token,
@@ -128,7 +128,7 @@ function getDateRange(days: number = 7): { start_date: string; end_date: string 
   const end = new Date();
   const start = new Date();
   start.setDate(start.getDate() - days);
-  
+
   return {
     start_date: start.toISOString().split("T")[0],
     end_date: end.toISOString().split("T")[0],
@@ -143,7 +143,7 @@ export async function checkConnection(req: Request): Promise<boolean> {
   try {
     const headers = getHeaders(req);
     if (!headers) return false;
-    
+
     const response = await axios.get(`${OURA_API_BASE}/personal_info`, {
       headers,
     });
@@ -158,9 +158,9 @@ export async function getSleepData(req: Request, days: number = 7) {
   try {
     const headers = getHeaders(req);
     if (!headers) return [];
-    
+
     const { start_date, end_date } = getDateRange(days);
-    
+
     // Fetch both daily_sleep (scores) and sleep (detailed periods)
     const [dailySleepResponse, sleepResponse] = await Promise.all([
       axios.get(`${OURA_API_BASE}/daily_sleep`, {
@@ -172,16 +172,16 @@ export async function getSleepData(req: Request, days: number = 7) {
         params: { start_date, end_date },
       }),
     ]);
-    
+
     const dailySleep = dailySleepResponse.data.data || [];
     const sleepPeriods = sleepResponse.data.data || [];
-    
+
     // Merge daily scores with detailed sleep period data
     return dailySleep.map((day: any) => {
       // Find the main sleep period for this day (longest or type "long_sleep")
       const periodsForDay = sleepPeriods.filter((p: any) => p.day === day.day);
       const mainPeriod = periodsForDay.find((p: any) => p.type === "long_sleep") || periodsForDay[0];
-      
+
       return {
         ...day,
         bedtime_start: mainPeriod?.bedtime_start || null,
@@ -209,9 +209,9 @@ export async function getActivityData(req: Request, days: number = 7) {
   try {
     const headers = getHeaders(req);
     if (!headers) return [];
-    
+
     const { start_date, end_date } = getDateRange(days);
-    
+
     // Fetch both daily_activity and workout data
     const [activityResponse, workoutResponse] = await Promise.all([
       axios.get(`${OURA_API_BASE}/daily_activity`, {
@@ -223,10 +223,10 @@ export async function getActivityData(req: Request, days: number = 7) {
         params: { start_date, end_date },
       }).catch(() => ({ data: { data: [] } })), // Workout may not exist for all users
     ]);
-    
+
     const dailyActivity = activityResponse.data.data || [];
     const workouts = workoutResponse.data.data || [];
-    
+
     // Merge daily activity with workout details
     return dailyActivity.map((day: any) => {
       const dayWorkouts = workouts.filter((w: any) => w.day === day.day);
@@ -260,13 +260,13 @@ export async function getReadinessData(req: Request, days: number = 7) {
   try {
     const headers = getHeaders(req);
     if (!headers) return [];
-    
+
     const { start_date, end_date } = getDateRange(days);
     const response = await axios.get(`${OURA_API_BASE}/daily_readiness`, {
       headers,
       params: { start_date, end_date },
     });
-    
+
     // Ensure all readiness fields are captured
     return (response.data.data || []).map((day: any) => ({
       ...day,
@@ -299,39 +299,39 @@ export async function getHeartRateData(req: Request, days: number = 7): Promise<
   try {
     const headers = getHeaders(req);
     if (!headers) return { readings: [], dailyStats: {} };
-    
+
     const { start_date, end_date } = getDateRange(days);
-    
+
     // Fetch heart rate data - this endpoint returns individual readings
     const response = await axios.get(`${OURA_API_BASE}/heartrate`, {
       headers,
       params: { start_datetime: `${start_date}T00:00:00Z`, end_datetime: `${end_date}T23:59:59Z` },
     });
-    
+
     const heartRateReadings = response.data.data || [];
-    
+
     // Group by day and compute daily stats
     const dailyStats: Record<string, { readings: any[], min: number, max: number, avg: number }> = {};
-    
+
     heartRateReadings.forEach((reading: any) => {
       const day = reading.timestamp?.split('T')[0];
       if (!day) return;
-      
+
       if (!dailyStats[day]) {
         dailyStats[day] = { readings: [], min: Infinity, max: -Infinity, avg: 0 };
       }
-      
+
       dailyStats[day].readings.push(reading);
       if (reading.bpm < dailyStats[day].min) dailyStats[day].min = reading.bpm;
       if (reading.bpm > dailyStats[day].max) dailyStats[day].max = reading.bpm;
     });
-    
+
     // Calculate averages
     Object.values(dailyStats).forEach((stats) => {
       const sum = stats.readings.reduce((acc: number, r: any) => acc + r.bpm, 0);
       stats.avg = Math.round(sum / stats.readings.length);
     });
-    
+
     return {
       readings: heartRateReadings,
       dailyStats,
@@ -346,7 +346,7 @@ export async function getPersonalInfo(req: Request) {
   try {
     const headers = getHeaders(req);
     if (!headers) return null;
-    
+
     const response = await axios.get(`${OURA_API_BASE}/personal_info`, {
       headers,
     });
@@ -416,9 +416,15 @@ export async function getAllOuraData(req: Request, days: number = 7): Promise<{
 }
 
 export async function getAllOuraDataByDateRange(
-  req: Request, 
-  startDate: string, 
-  endDate: string
+  req: Request,
+  startDate: string,
+  endDate: string,
+  options: {
+    includeSleep?: boolean,
+    includeActivity?: boolean,
+    includeReadiness?: boolean,
+    includeHeartRate?: boolean
+  } = {}
 ): Promise<{
   sleep: any[];
   activity: any[];
@@ -429,11 +435,20 @@ export async function getAllOuraDataByDateRange(
     return { sleep: [], activity: [], readiness: [], heartRate: { readings: [], dailyStats: {} } };
   }
 
+  const {
+    includeSleep = true,
+    includeActivity = true,
+    includeReadiness = true,
+    includeHeartRate = true
+  } = options;
+
+  console.log(`Fetching data for range ${startDate} to ${endDate}. Types: Sleep=${includeSleep}, Activity=${includeActivity}, Readiness=${includeReadiness}, HeartRate=${includeHeartRate}`);
+
   const [sleep, activity, readiness, heartRate] = await Promise.all([
-    getSleepDataByDateRange(req, startDate, endDate),
-    getActivityDataByDateRange(req, startDate, endDate),
-    getReadinessDataByDateRange(req, startDate, endDate),
-    getHeartRateDataByDateRange(req, startDate, endDate),
+    includeSleep ? getSleepDataByDateRange(req, startDate, endDate) : Promise.resolve([]),
+    includeActivity ? getActivityDataByDateRange(req, startDate, endDate) : Promise.resolve([]),
+    includeReadiness ? getReadinessDataByDateRange(req, startDate, endDate) : Promise.resolve([]),
+    includeHeartRate ? getHeartRateDataByDateRange(req, startDate, endDate) : Promise.resolve({ readings: [], dailyStats: {} }),
   ]);
 
   return { sleep, activity, readiness, heartRate };
@@ -443,7 +458,7 @@ async function getSleepDataByDateRange(req: Request, startDate: string, endDate:
   try {
     const headers = getHeaders(req);
     if (!headers) return [];
-    
+
     const [dailySleepResponse, sleepResponse] = await Promise.all([
       axios.get(`${OURA_API_BASE}/daily_sleep`, {
         headers,
@@ -454,14 +469,14 @@ async function getSleepDataByDateRange(req: Request, startDate: string, endDate:
         params: { start_date: startDate, end_date: endDate },
       }),
     ]);
-    
+
     const dailySleep = dailySleepResponse.data?.data || [];
     const sleepPeriods = sleepResponse.data?.data || [];
-    
+
     return dailySleep.map((day: any) => {
       const periods = sleepPeriods.filter((p: any) => p.day === day.day);
       const mainPeriod = periods.find((p: any) => p.type === "long_sleep") || periods[0];
-      
+
       return {
         id: day.id,
         day: day.day,
@@ -491,12 +506,12 @@ async function getActivityDataByDateRange(req: Request, startDate: string, endDa
   try {
     const headers = getHeaders(req);
     if (!headers) return [];
-    
+
     const activityResponse = await axios.get(`${OURA_API_BASE}/daily_activity`, {
       headers,
       params: { start_date: startDate, end_date: endDate },
     });
-    
+
     let workouts: any[] = [];
     try {
       const workoutResponse = await axios.get(`${OURA_API_BASE}/workout`, {
@@ -507,9 +522,9 @@ async function getActivityDataByDateRange(req: Request, startDate: string, endDa
     } catch (workoutError) {
       console.log("No workout data found for date range (this is normal if no workouts recorded)");
     }
-    
+
     const activityData = activityResponse.data?.data || [];
-    
+
     return activityData.map((day: any) => {
       const dayWorkouts = workouts.filter((w: any) => w.day === day.day);
       return {
@@ -548,12 +563,12 @@ async function getReadinessDataByDateRange(req: Request, startDate: string, endD
   try {
     const headers = getHeaders(req);
     if (!headers) return [];
-    
+
     const response = await axios.get(`${OURA_API_BASE}/daily_readiness`, {
       headers,
       params: { start_date: startDate, end_date: endDate },
     });
-    
+
     return (response.data?.data || []).map((day: any) => ({
       id: day.id,
       day: day.day,
@@ -572,34 +587,34 @@ async function getHeartRateDataByDateRange(req: Request, startDate: string, endD
   try {
     const headers = getHeaders(req);
     if (!headers) return { readings: [], dailyStats: {} };
-    
+
     const response = await axios.get(`${OURA_API_BASE}/heartrate`, {
       headers,
       params: { start_datetime: `${startDate}T00:00:00Z`, end_datetime: `${endDate}T23:59:59Z` },
     });
-    
+
     const heartRateReadings = response.data?.data || [];
-    
+
     const dailyStats: Record<string, { readings: any[], min: number, max: number, avg: number }> = {};
-    
+
     heartRateReadings.forEach((reading: any) => {
       const day = reading.timestamp?.split('T')[0];
       if (!day) return;
-      
+
       if (!dailyStats[day]) {
         dailyStats[day] = { readings: [], min: Infinity, max: -Infinity, avg: 0 };
       }
-      
+
       dailyStats[day].readings.push(reading);
       if (reading.bpm < dailyStats[day].min) dailyStats[day].min = reading.bpm;
       if (reading.bpm > dailyStats[day].max) dailyStats[day].max = reading.bpm;
     });
-    
+
     Object.values(dailyStats).forEach((stats) => {
       const sum = stats.readings.reduce((acc: number, r: any) => acc + r.bpm, 0);
       stats.avg = Math.round(sum / stats.readings.length);
     });
-    
+
     return { readings: heartRateReadings, dailyStats };
   } catch (error) {
     console.error("Failed to fetch heart rate data by date range:", error);
