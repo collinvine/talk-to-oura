@@ -16,6 +16,7 @@ import {
   getAllOuraData,
   getAllOuraDataByDateRange,
 } from "./oura";
+import { ouraQuerySchema } from "@shared/schema";
 
 // Use direct Gemini API (not Replit proxy)
 const ai = new GoogleGenAI({
@@ -70,15 +71,124 @@ interface DateRange {
   usesCustomRange: boolean;
 }
 
+function formatDate(date: Date): string {
+  return date.toISOString().split("T")[0];
+}
+
+function parseDateRangeFromQuery(query: string, today: Date): DateRange | null {
+  const q = query.toLowerCase();
+  const todayStr = formatDate(today);
+
+  const toRange = (start: Date, end: Date): DateRange => ({
+    startDate: formatDate(start),
+    endDate: formatDate(end),
+    usesCustomRange: true,
+  });
+
+  const rangeMatch = q.match(/(\d{4}-\d{2}-\d{2})\s*(to|-)\s*(\d{4}-\d{2}-\d{2})/);
+  if (rangeMatch) {
+    return {
+      startDate: rangeMatch[1],
+      endDate: rangeMatch[3],
+      usesCustomRange: true,
+    };
+  }
+
+  const singleDateMatch = q.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+  if (singleDateMatch) {
+    return {
+      startDate: singleDateMatch[1],
+      endDate: singleDateMatch[1],
+      usesCustomRange: true,
+    };
+  }
+
+  if (/\b(today)\b/.test(q)) {
+    return { startDate: todayStr, endDate: todayStr, usesCustomRange: true };
+  }
+
+  if (/\b(yesterday|last night)\b/.test(q)) {
+    const date = new Date(today);
+    date.setDate(date.getDate() - 1);
+    return { startDate: formatDate(date), endDate: formatDate(date), usesCustomRange: true };
+  }
+
+  const relativeMatch = q.match(/\b(last|past|previous)\s+(\d+)\s+(days?|weeks?|months?|years?)\b/);
+  if (relativeMatch) {
+    const amount = Number(relativeMatch[2]);
+    const unit = relativeMatch[3];
+    let days = amount;
+    if (unit.startsWith("week")) days = amount * 7;
+    if (unit.startsWith("month")) days = amount * 30;
+    if (unit.startsWith("year")) days = amount * 365;
+    const start = new Date(today);
+    start.setDate(start.getDate() - days);
+    return toRange(start, today);
+  }
+
+  if (/\bthis\s+week\b/.test(q) || /\blast\s+week\b/.test(q)) {
+    const start = new Date(today);
+    start.setDate(start.getDate() - 7);
+    return toRange(start, today);
+  }
+
+  if (/\bthis\s+month\b/.test(q)) {
+    const start = new Date(today.getFullYear(), today.getMonth(), 1);
+    return toRange(start, today);
+  }
+
+  if (/\blast\s+month\b/.test(q)) {
+    const start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const end = new Date(today.getFullYear(), today.getMonth(), 0);
+    return toRange(start, end);
+  }
+
+  if (/\bthis\s+year\b/.test(q)) {
+    const start = new Date(today.getFullYear(), 0, 1);
+    return toRange(start, today);
+  }
+
+  if (/\blast\s+year\b/.test(q)) {
+    const start = new Date(today.getFullYear() - 1, 0, 1);
+    const end = new Date(today.getFullYear() - 1, 11, 31);
+    return toRange(start, end);
+  }
+
+  const yearMatch = q.match(/\b(20\d{2})\b/);
+  if (yearMatch) {
+    const year = Number(yearMatch[1]);
+    const start = new Date(year, 0, 1);
+    const end = new Date(year, 11, 31);
+    return toRange(start, end);
+  }
+
+  return null;
+}
+
 async function extractDateRange(query: string): Promise<DateRange> {
   const today = new Date();
-  const todayStr = today.toISOString().split("T")[0];
+  const todayStr = formatDate(today);
 
   const defaultRange: DateRange = {
     startDate: new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
     endDate: todayStr,
     usesCustomRange: false,
   };
+
+  const parsedRange = parseDateRangeFromQuery(query, today);
+  if (parsedRange) {
+    if (parsedRange.startDate > parsedRange.endDate) {
+      return {
+        startDate: parsedRange.endDate,
+        endDate: parsedRange.startDate,
+        usesCustomRange: true,
+      };
+    }
+    return {
+      ...parsedRange,
+      endDate: parsedRange.endDate > todayStr ? todayStr : parsedRange.endDate,
+    };
+  }
 
   // Updated patterns to catch years and broader terms
   const datePatterns = [
@@ -317,11 +427,11 @@ export async function registerRoutes(
 
   app.post("/api/oura/query", async (req: Request, res: Response) => {
     try {
-      const { query } = req.body;
-
-      if (!query || typeof query !== "string") {
-        return res.status(400).json({ error: "Query is required" });
+      const parsed = ouraQuerySchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.issues[0]?.message || "Query is required" });
       }
+      const { query } = parsed.data;
 
       if (!isConnected(req)) {
         return res.status(401).json({
@@ -384,6 +494,7 @@ export async function registerRoutes(
 
       // Build data sections only for relevant types
       let dataSections = "";
+      let heartRateSummary: Array<{ day: string; min: number | null; max: number | null; avg: number | null }> = [];
 
       if (includeSleep) {
         dataSections += `\nSLEEP DATA:\n${JSON.stringify(ouraData.sleep)}`;
@@ -399,7 +510,7 @@ export async function registerRoutes(
 
       if (includeHeartRate) {
         // Only include daily summaries, not individual readings
-        const heartRateSummary = Object.entries(ouraData.heartRate.dailyStats).map(([day, stats]: [string, any]) => ({
+        heartRateSummary = Object.entries(ouraData.heartRate.dailyStats).map(([day, stats]: [string, any]) => ({
           day,
           min: stats.min === Infinity ? null : stats.min,
           max: stats.max === -Infinity ? null : stats.max,
@@ -440,7 +551,7 @@ Please analyze the data and answer the user's question.`;
       if (includeActivity) relevantData.activity = ouraData.activity;
       if (includeReadiness) relevantData.readiness = ouraData.readiness;
       if (includeHeartRate) {
-        relevantData.heartRate = { dailyStats: ouraData.heartRate.dailyStats };
+        relevantData.heartRate = { dailyStats: heartRateSummary };
       }
 
       res.write(`data: ${JSON.stringify({ ouraData: Object.keys(relevantData).length > 0 ? relevantData : null, done: true })}\n\n`);

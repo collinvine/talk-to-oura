@@ -109,12 +109,33 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
   }
 }
 
-function getAccessToken(req: Request): string | null {
-  return req.session?.ouraAccessToken || null;
+async function ensureValidAccessToken(req: Request): Promise<string | null> {
+  const accessToken = req.session?.ouraAccessToken || null;
+  if (!accessToken) return null;
+
+  const expiry = req.session?.ouraTokenExpiry;
+  if (!expiry) return accessToken;
+
+  const now = Date.now();
+  if (now < expiry - 60_000) {
+    return accessToken;
+  }
+
+  const refreshToken = req.session?.ouraRefreshToken;
+  if (!refreshToken) return null;
+
+  const refreshed = await refreshAccessToken(refreshToken);
+  if (!refreshed) return null;
+
+  req.session.ouraAccessToken = refreshed.accessToken;
+  req.session.ouraRefreshToken = refreshed.refreshToken;
+  req.session.ouraTokenExpiry = Date.now() + refreshed.expiresIn * 1000;
+
+  return refreshed.accessToken;
 }
 
-function getHeaders(req: Request): { Authorization: string; "Content-Type": string } | null {
-  const token = getAccessToken(req);
+async function getHeaders(req: Request): Promise<{ Authorization: string; "Content-Type": string } | null> {
+  const token = await ensureValidAccessToken(req);
   if (!token) {
     return null;
   }
@@ -141,7 +162,7 @@ export function isConnected(req: Request): boolean {
 
 export async function checkConnection(req: Request): Promise<boolean> {
   try {
-    const headers = getHeaders(req);
+    const headers = await getHeaders(req);
     if (!headers) return false;
 
     const response = await axios.get(`${OURA_API_BASE}/personal_info`, {
@@ -156,7 +177,7 @@ export async function checkConnection(req: Request): Promise<boolean> {
 
 export async function getSleepData(req: Request, days: number = 7) {
   try {
-    const headers = getHeaders(req);
+    const headers = await getHeaders(req);
     if (!headers) return [];
 
     const { start_date, end_date } = getDateRange(days);
@@ -207,7 +228,7 @@ export async function getSleepData(req: Request, days: number = 7) {
 
 export async function getActivityData(req: Request, days: number = 7) {
   try {
-    const headers = getHeaders(req);
+    const headers = await getHeaders(req);
     if (!headers) return [];
 
     const { start_date, end_date } = getDateRange(days);
@@ -258,7 +279,7 @@ export async function getActivityData(req: Request, days: number = 7) {
 
 export async function getReadinessData(req: Request, days: number = 7) {
   try {
-    const headers = getHeaders(req);
+    const headers = await getHeaders(req);
     if (!headers) return [];
 
     const { start_date, end_date } = getDateRange(days);
@@ -297,7 +318,7 @@ interface HeartRateResult {
 
 export async function getHeartRateData(req: Request, days: number = 7): Promise<HeartRateResult> {
   try {
-    const headers = getHeaders(req);
+    const headers = await getHeaders(req);
     if (!headers) return { readings: [], dailyStats: {} };
 
     const { start_date, end_date } = getDateRange(days);
@@ -344,7 +365,7 @@ export async function getHeartRateData(req: Request, days: number = 7): Promise<
 
 export async function getPersonalInfo(req: Request) {
   try {
-    const headers = getHeaders(req);
+    const headers = await getHeaders(req);
     if (!headers) return null;
 
     const response = await axios.get(`${OURA_API_BASE}/personal_info`, {
@@ -456,7 +477,7 @@ export async function getAllOuraDataByDateRange(
 
 async function getSleepDataByDateRange(req: Request, startDate: string, endDate: string) {
   try {
-    const headers = getHeaders(req);
+    const headers = await getHeaders(req);
     if (!headers) return [];
 
     const [dailySleepResponse, sleepResponse] = await Promise.all([
@@ -504,7 +525,7 @@ async function getSleepDataByDateRange(req: Request, startDate: string, endDate:
 
 async function getActivityDataByDateRange(req: Request, startDate: string, endDate: string) {
   try {
-    const headers = getHeaders(req);
+    const headers = await getHeaders(req);
     if (!headers) return [];
 
     const activityResponse = await axios.get(`${OURA_API_BASE}/daily_activity`, {
@@ -561,7 +582,7 @@ async function getActivityDataByDateRange(req: Request, startDate: string, endDa
 
 async function getReadinessDataByDateRange(req: Request, startDate: string, endDate: string) {
   try {
-    const headers = getHeaders(req);
+    const headers = await getHeaders(req);
     if (!headers) return [];
 
     const response = await axios.get(`${OURA_API_BASE}/daily_readiness`, {
@@ -585,7 +606,7 @@ async function getReadinessDataByDateRange(req: Request, startDate: string, endD
 
 async function getHeartRateDataByDateRange(req: Request, startDate: string, endDate: string): Promise<HeartRateResult> {
   try {
-    const headers = getHeaders(req);
+    const headers = await getHeaders(req);
     if (!headers) return { readings: [], dailyStats: {} };
 
     const response = await axios.get(`${OURA_API_BASE}/heartrate`, {

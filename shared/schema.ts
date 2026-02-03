@@ -48,7 +48,7 @@ export type Message = typeof messages.$inferSelect;
 export type InsertMessage = z.infer<typeof insertMessageSchema>;
 
 export const ouraQuerySchema = z.object({
-  query: z.string().min(1, "Please enter a question"),
+  query: z.string().min(1, "Please enter a question").max(500, "Please keep your question under 500 characters"),
 });
 
 export type OuraQuery = z.infer<typeof ouraQuerySchema>;
@@ -66,6 +66,19 @@ export interface OuraSleepData {
     timing: number;
     total_sleep: number;
   };
+  bedtime_start?: string | null;
+  bedtime_end?: string | null;
+  total_sleep_duration?: number | null;
+  time_in_bed?: number | null;
+  awake_time?: number | null;
+  rem_sleep_duration?: number | null;
+  deep_sleep_duration?: number | null;
+  light_sleep_duration?: number | null;
+  restless_periods?: number | null;
+  average_heart_rate?: number | null;
+  lowest_heart_rate?: number | null;
+  average_hrv?: number | null;
+  efficiency?: number | null;
 }
 
 export interface OuraActivityData {
@@ -79,6 +92,13 @@ export interface OuraActivityData {
   medium_activity_time: number;
   low_activity_time: number;
   sedentary_time: number;
+  total_calories?: number;
+  target_calories?: number;
+  resting_time?: number;
+  inactivity_alerts?: number;
+  met?: unknown;
+  class_5_min?: unknown;
+  workouts?: unknown[];
 }
 
 export interface OuraReadinessData {
@@ -86,6 +106,7 @@ export interface OuraReadinessData {
   day: string;
   score: number | null;
   temperature_deviation: number | null;
+  temperature_trend_deviation?: number | null;
   contributors: {
     activity_balance: number;
     body_temperature: number;
@@ -98,10 +119,22 @@ export interface OuraReadinessData {
   };
 }
 
-export interface OuraHeartRateData {
+export interface OuraHeartRateDataPoint {
   bpm: number;
   source: string;
   timestamp: string;
+}
+
+export interface OuraHeartRateDailyStat {
+  day: string;
+  min: number | null;
+  max: number | null;
+  avg: number | null;
+}
+
+export interface OuraHeartRatePayload {
+  readings?: OuraHeartRateDataPoint[];
+  dailyStats?: OuraHeartRateDailyStat[];
 }
 
 export interface ChatMessage {
@@ -113,6 +146,6 @@ export interface ChatMessage {
     sleep?: OuraSleepData[];
     activity?: OuraActivityData[];
     readiness?: OuraReadinessData[];
-    heartRate?: OuraHeartRateData[];
+    heartRate?: OuraHeartRatePayload;
   };
 }
