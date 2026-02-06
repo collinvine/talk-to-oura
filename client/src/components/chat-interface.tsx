@@ -163,6 +163,7 @@ export function ChatInterface({
             onKeyDown={handleKeyDown}
             placeholder="Ask about your Oura data..."
             className="min-h-[48px] max-h-[120px] resize-none"
+            maxLength={500}
             disabled={isLoading}
             data-testid="input-chat-message"
           />

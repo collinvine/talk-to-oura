@@ -37,11 +37,11 @@ class MemoryChatStorage implements IChatStorage {
 
   async deleteConversation(id: number): Promise<void> {
     this.conversations.delete(id);
-    for (const [msgId, msg] of this.messages) {
+    this.messages.forEach((msg, msgId) => {
       if (msg.conversationId === id) {
         this.messages.delete(msgId);
       }
-    }
+    });
   }
 
   async getMessagesByConversation(conversationId: number): Promise<Message[]> {
