@@ -17,6 +17,9 @@ import {
   getAllOuraDataByDateRange,
 } from "./oura";
 import { ouraQuerySchema } from "@shared/schema";
+import { OuraCache } from "./cache";
+
+const queryCache = new OuraCache();
 
 // Use direct Gemini API (not Replit proxy)
 const ai = new GoogleGenAI({
@@ -465,14 +468,60 @@ export async function registerRoutes(
       // IMPORTANT: Do NOT default to fetching Heart Rate for long ranges unless explicitly asked
       const includeHeartRate = wantsHeartRate;
 
-      const ouraData = dateRange.usesCustomRange
-        ? await getAllOuraDataByDateRange(req, dateRange.startDate, dateRange.endDate, {
-          includeSleep,
-          includeActivity,
-          includeReadiness,
-          includeHeartRate
-        })
-        : await getAllOuraData(req, 7);
+      const neededTypes = {
+        sleep: includeSleep,
+        activity: includeActivity,
+        readiness: includeReadiness,
+        heartRate: includeHeartRate
+      };
+
+      let ouraData: any = null;
+      let usedCache = false;
+      const sessionId = req.sessionID;
+      const cachedEntry = queryCache.get(sessionId);
+
+      // Cache Logic
+      if (cachedEntry) {
+        // Case 1: Follow-up query (no specific date detected, uses default range)
+        if (!dateRange.usesCustomRange) {
+          console.log("Using cached data for follow-up query");
+          // Update the date range to match what we have in cache so the prompt is correct
+          dateRange.startDate = cachedEntry.startDate;
+          dateRange.endDate = cachedEntry.endDate;
+          dateRange.usesCustomRange = true; // Treat as custom so we report the correct range description
+
+          ouraData = cachedEntry.data;
+          usedCache = true;
+        }
+        // Case 2: Specific date range requested, check if cache covers it
+        else if (queryCache.matches(cachedEntry, dateRange.startDate, dateRange.endDate, neededTypes)) {
+          console.log(`Using cached data (subset) for range ${dateRange.startDate} to ${dateRange.endDate}`);
+          ouraData = queryCache.filterData(cachedEntry, dateRange.startDate, dateRange.endDate);
+          usedCache = true;
+        }
+      }
+
+      if (!ouraData) {
+        console.log("Fetching fresh data from Oura API");
+        ouraData = dateRange.usesCustomRange
+          ? await getAllOuraDataByDateRange(req, dateRange.startDate, dateRange.endDate, {
+            includeSleep,
+            includeActivity,
+            includeReadiness,
+            includeHeartRate
+          })
+          : await getAllOuraData(req, 7);
+
+        // Cache the new data
+        if (sessionId) {
+          queryCache.set(sessionId, {
+            startDate: dateRange.startDate,
+            endDate: dateRange.endDate,
+            data: ouraData,
+            includedTypes: neededTypes
+          });
+        }
+      }
 
       const hasData = ouraData.sleep.length > 0 || ouraData.activity.length > 0 ||
         ouraData.readiness.length > 0 || ouraData.heartRate.readings.length > 0;
