@@ -2,11 +2,16 @@ import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 
 const MODELS = ["gemini-3-flash-preview", "gemini-2.5-flash"];
 
+export interface ConversationTurn {
+  role: "user" | "model";
+  parts: { text: string }[];
+}
+
 export const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
 });
 
-export async function generateWithRetry(prompt: string, maxRetries = 2) {
+export async function generateWithRetry(contents: string | ConversationTurn[], maxRetries = 2) {
   let lastError: any = null;
 
   for (const model of MODELS) {
@@ -18,7 +23,7 @@ export async function generateWithRetry(prompt: string, maxRetries = 2) {
 
         const stream = await ai.models.generateContentStream({
           model,
-          contents: prompt,
+          contents,
           config,
         });
 

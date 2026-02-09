@@ -3,7 +3,7 @@ import { isConnected, getAllOuraData, getAllOuraDataByDateRange } from "../oura"
 import { ouraQuerySchema } from "@shared/schema";
 import { OuraCache } from "../cache";
 import { extractDateRange } from "../utils/date-range";
-import { ai, generateWithRetry } from "../utils/gemini";
+import { ai, generateWithRetry, type ConversationTurn } from "../utils/gemini";
 
 const queryCache = new OuraCache();
 
@@ -32,9 +32,8 @@ function detectRelevantDataTypes(query: string): DataTypeFlags {
   };
 }
 
-function buildPrompt(query: string, ouraData: any, dateRangeDescription: string, dataTypes: DataTypeFlags): string {
+function buildDataSections(ouraData: any, dataTypes: DataTypeFlags): string {
   let dataSections = "";
-  let heartRateSummary: Array<{ day: string; min: number | null; max: number | null; avg: number | null }> = [];
 
   if (dataTypes.sleep) {
     dataSections += `\nSLEEP DATA:\n${JSON.stringify(ouraData.sleep)}`;
@@ -49,7 +48,7 @@ function buildPrompt(query: string, ouraData: any, dateRangeDescription: string,
   }
 
   if (dataTypes.heartRate) {
-    heartRateSummary = Object.entries(ouraData.heartRate.dailyStats).map(([day, stats]: [string, any]) => ({
+    const heartRateSummary = Object.entries(ouraData.heartRate.dailyStats).map(([day, stats]: [string, any]) => ({
       day,
       min: stats.min === Infinity ? null : stats.min,
       max: stats.max === -Infinity ? null : stats.max,
@@ -58,6 +57,10 @@ function buildPrompt(query: string, ouraData: any, dateRangeDescription: string,
     dataSections += `\nHEART RATE DAILY SUMMARY (min/max/avg bpm per day):\n${JSON.stringify(heartRateSummary)}`;
   }
 
+  return dataSections;
+}
+
+function buildSystemContext(dateRangeDescription: string, dataSections: string): string {
   return `You are a helpful health assistant that analyzes Oura ring data.
 You have access to the user's sleep, activity, readiness, and heart rate data from their Oura ring.
 Provide insightful, personalized responses based on the data.
@@ -66,11 +69,43 @@ If asked about trends, compare recent days. If asked about specific metrics, exp
 Keep responses concise but informative. Use plain language.
 
 Here is the user's Oura data ${dateRangeDescription}:
-${dataSections}
+${dataSections}`;
+}
 
-USER QUESTION: ${query}
+function buildStreamInput(
+  query: string,
+  systemContext: string,
+  conversationHistory?: Array<{ role: string; content: string }>,
+): string | ConversationTurn[] {
+  const conversationTurns: ConversationTurn[] = [];
 
-Please analyze the data and answer the user's question.`;
+  if (conversationHistory && conversationHistory.length > 0) {
+    conversationTurns.push({
+      role: "user",
+      parts: [{ text: systemContext + "\n\nPlease use the above data context for this conversation." }],
+    });
+    conversationTurns.push({
+      role: "model",
+      parts: [{ text: "I have the Oura data ready. I'll use it to answer your questions about your health metrics." }],
+    });
+
+    const recentHistory = conversationHistory.slice(-10);
+    for (const msg of recentHistory) {
+      conversationTurns.push({
+        role: msg.role === "assistant" ? "model" : "user",
+        parts: [{ text: msg.content }],
+      });
+    }
+
+    conversationTurns.push({
+      role: "user",
+      parts: [{ text: query }],
+    });
+
+    return conversationTurns;
+  }
+
+  return `${systemContext}\n\nUSER QUESTION: ${query}\n\nPlease analyze the data and answer the user's question.`;
 }
 
 function buildRelevantDataPayload(ouraData: any, dataTypes: DataTypeFlags) {
@@ -97,7 +132,7 @@ export function registerQueryRoute(router: Router): void {
       if (!parsed.success) {
         return res.status(400).json({ error: parsed.error.issues[0]?.message || "Query is required" });
       }
-      const { query } = parsed.data;
+      const { query, conversationHistory } = parsed.data;
 
       if (!isConnected(req)) {
         return res.status(401).json({
@@ -168,8 +203,10 @@ export function registerQueryRoute(router: Router): void {
         ? `from ${dateRange.startDate} to ${dateRange.endDate}`
         : "from the last 7 days";
 
-      const fullPrompt = buildPrompt(query, ouraData, dateRangeDescription, dataTypes);
-      const stream = await generateWithRetry(fullPrompt);
+      const dataSections = buildDataSections(ouraData, dataTypes);
+      const systemContext = buildSystemContext(dateRangeDescription, dataSections);
+      const streamInput = buildStreamInput(query, systemContext, conversationHistory);
+      const stream = await generateWithRetry(streamInput);
 
       for await (const chunk of stream) {
         const text = chunk.text || "";
