@@ -83,7 +83,13 @@ export default function Home() {
       content,
       timestamp: new Date(),
     };
-    
+
+    // Build conversation history from existing messages (before adding new user message)
+    const conversationHistory = messages.slice(-10).map((msg) => ({
+      role: msg.role,
+      content: msg.content,
+    }));
+
     setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
     setStreamingContent("");
@@ -92,7 +98,10 @@ export default function Home() {
       const response = await fetch("/api/oura/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: content }),
+        body: JSON.stringify({
+          query: content,
+          conversationHistory: conversationHistory.length > 0 ? conversationHistory : undefined,
+        }),
         credentials: "include",
       });
 

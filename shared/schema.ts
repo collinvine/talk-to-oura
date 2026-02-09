@@ -47,8 +47,14 @@ export type InsertConversation = z.infer<typeof insertConversationSchema>;
 export type Message = typeof messages.$inferSelect;
 export type InsertMessage = z.infer<typeof insertMessageSchema>;
 
+export const conversationMessageSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.string(),
+});
+
 export const ouraQuerySchema = z.object({
   query: z.string().min(1, "Please enter a question").max(500, "Please keep your question under 500 characters"),
+  conversationHistory: z.array(conversationMessageSchema).max(20).optional(),
 });
 
 export type OuraQuery = z.infer<typeof ouraQuerySchema>;
