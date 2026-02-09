@@ -29,7 +29,12 @@ const ai = new GoogleGenAI({
 // Models to try in order (with fallback)
 const MODELS = ["gemini-3-flash-preview", "gemini-2.5-flash"];
 
-async function generateWithRetry(prompt: string, maxRetries = 2) {
+interface ConversationTurn {
+  role: "user" | "model";
+  parts: { text: string }[];
+}
+
+async function generateWithRetry(contents: string | ConversationTurn[], maxRetries = 2) {
   let lastError: any = null;
 
   for (const model of MODELS) {
@@ -41,7 +46,7 @@ async function generateWithRetry(prompt: string, maxRetries = 2) {
 
         const stream = await ai.models.generateContentStream({
           model,
-          contents: prompt,
+          contents,
           config,
         });
 
@@ -434,7 +439,7 @@ export async function registerRoutes(
       if (!parsed.success) {
         return res.status(400).json({ error: parsed.error.issues[0]?.message || "Query is required" });
       }
-      const { query } = parsed.data;
+      const { query, conversationHistory } = parsed.data;
 
       if (!isConnected(req)) {
         return res.status(401).json({
@@ -568,7 +573,7 @@ export async function registerRoutes(
         dataSections += `\nHEART RATE DAILY SUMMARY (min/max/avg bpm per day):\n${JSON.stringify(heartRateSummary)}`;
       }
 
-      const fullPrompt = `You are a helpful health assistant that analyzes Oura ring data. 
+      const systemContext = `You are a helpful health assistant that analyzes Oura ring data.
 You have access to the user's sleep, activity, readiness, and heart rate data from their Oura ring.
 Provide insightful, personalized responses based on the data.
 Be conversational and supportive. Use specific numbers and dates from the data.
@@ -576,13 +581,43 @@ If asked about trends, compare recent days. If asked about specific metrics, exp
 Keep responses concise but informative. Use plain language.
 
 Here is the user's Oura data ${dateRangeDescription}:
-${dataSections}
+${dataSections}`;
 
-USER QUESTION: ${query}
+      // Build multi-turn conversation for follow-up context
+      const conversationTurns: ConversationTurn[] = [];
 
-Please analyze the data and answer the user's question.`;
+      if (conversationHistory && conversationHistory.length > 0) {
+        // Include system context as the first user turn, paired with an acknowledgment
+        conversationTurns.push({
+          role: "user",
+          parts: [{ text: systemContext + "\n\nPlease use the above data context for this conversation." }],
+        });
+        conversationTurns.push({
+          role: "model",
+          parts: [{ text: "I have the Oura data ready. I'll use it to answer your questions about your health metrics." }],
+        });
 
-      const stream = await generateWithRetry(fullPrompt);
+        // Add previous conversation turns (limit to last 10 messages to manage token usage)
+        const recentHistory = conversationHistory.slice(-10);
+        for (const msg of recentHistory) {
+          conversationTurns.push({
+            role: msg.role === "assistant" ? "model" : "user",
+            parts: [{ text: msg.content }],
+          });
+        }
+
+        // Add the current query
+        conversationTurns.push({
+          role: "user",
+          parts: [{ text: query }],
+        });
+      }
+
+      const streamInput = conversationTurns.length > 0
+        ? conversationTurns
+        : `${systemContext}\n\nUSER QUESTION: ${query}\n\nPlease analyze the data and answer the user's question.`;
+
+      const stream = await generateWithRetry(streamInput);
 
       let fullResponse = "";
 
