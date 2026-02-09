@@ -311,9 +311,33 @@ export async function getReadinessData(req: Request, days: number = 7) {
   }
 }
 
-interface HeartRateResult {
+export interface HeartRateResult {
   readings: any[];
   dailyStats: Record<string, { readings: any[]; min: number; max: number; avg: number }>;
+}
+
+function computeHeartRateDailyStats(readings: any[]): Record<string, { readings: any[]; min: number; max: number; avg: number }> {
+  const dailyStats: Record<string, { readings: any[]; min: number; max: number; avg: number }> = {};
+
+  readings.forEach((reading: any) => {
+    const day = reading.timestamp?.split('T')[0];
+    if (!day) return;
+
+    if (!dailyStats[day]) {
+      dailyStats[day] = { readings: [], min: Infinity, max: -Infinity, avg: 0 };
+    }
+
+    dailyStats[day].readings.push(reading);
+    if (reading.bpm < dailyStats[day].min) dailyStats[day].min = reading.bpm;
+    if (reading.bpm > dailyStats[day].max) dailyStats[day].max = reading.bpm;
+  });
+
+  Object.values(dailyStats).forEach((stats) => {
+    const sum = stats.readings.reduce((acc: number, r: any) => acc + r.bpm, 0);
+    stats.avg = Math.round(sum / stats.readings.length);
+  });
+
+  return dailyStats;
 }
 
 export async function getHeartRateData(req: Request, days: number = 7): Promise<HeartRateResult> {
@@ -323,7 +347,6 @@ export async function getHeartRateData(req: Request, days: number = 7): Promise<
 
     const { start_date, end_date } = getDateRange(days);
 
-    // Fetch heart rate data - this endpoint returns individual readings
     const response = await axios.get(`${OURA_API_BASE}/heartrate`, {
       headers,
       params: { start_datetime: `${start_date}T00:00:00Z`, end_datetime: `${end_date}T23:59:59Z` },
@@ -331,31 +354,9 @@ export async function getHeartRateData(req: Request, days: number = 7): Promise<
 
     const heartRateReadings = response.data.data || [];
 
-    // Group by day and compute daily stats
-    const dailyStats: Record<string, { readings: any[], min: number, max: number, avg: number }> = {};
-
-    heartRateReadings.forEach((reading: any) => {
-      const day = reading.timestamp?.split('T')[0];
-      if (!day) return;
-
-      if (!dailyStats[day]) {
-        dailyStats[day] = { readings: [], min: Infinity, max: -Infinity, avg: 0 };
-      }
-
-      dailyStats[day].readings.push(reading);
-      if (reading.bpm < dailyStats[day].min) dailyStats[day].min = reading.bpm;
-      if (reading.bpm > dailyStats[day].max) dailyStats[day].max = reading.bpm;
-    });
-
-    // Calculate averages
-    Object.values(dailyStats).forEach((stats) => {
-      const sum = stats.readings.reduce((acc: number, r: any) => acc + r.bpm, 0);
-      stats.avg = Math.round(sum / stats.readings.length);
-    });
-
     return {
       readings: heartRateReadings,
-      dailyStats,
+      dailyStats: computeHeartRateDailyStats(heartRateReadings),
     };
   } catch (error) {
     console.error("Failed to fetch heart rate data:", error);
@@ -616,27 +617,10 @@ async function getHeartRateDataByDateRange(req: Request, startDate: string, endD
 
     const heartRateReadings = response.data?.data || [];
 
-    const dailyStats: Record<string, { readings: any[], min: number, max: number, avg: number }> = {};
-
-    heartRateReadings.forEach((reading: any) => {
-      const day = reading.timestamp?.split('T')[0];
-      if (!day) return;
-
-      if (!dailyStats[day]) {
-        dailyStats[day] = { readings: [], min: Infinity, max: -Infinity, avg: 0 };
-      }
-
-      dailyStats[day].readings.push(reading);
-      if (reading.bpm < dailyStats[day].min) dailyStats[day].min = reading.bpm;
-      if (reading.bpm > dailyStats[day].max) dailyStats[day].max = reading.bpm;
-    });
-
-    Object.values(dailyStats).forEach((stats) => {
-      const sum = stats.readings.reduce((acc: number, r: any) => acc + r.bpm, 0);
-      stats.avg = Math.round(sum / stats.readings.length);
-    });
-
-    return { readings: heartRateReadings, dailyStats };
+    return {
+      readings: heartRateReadings,
+      dailyStats: computeHeartRateDailyStats(heartRateReadings),
+    };
   } catch (error) {
     console.error("Failed to fetch heart rate data by date range:", error);
     return { readings: [], dailyStats: {} };
