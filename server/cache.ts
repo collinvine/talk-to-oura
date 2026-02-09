@@ -34,7 +34,7 @@ export class OuraCache {
 
   private cleanup() {
     const now = Date.now();
-    for (const [key, entry] of this.cache.entries()) {
+    for (const [key, entry] of Array.from(this.cache.entries())) {
       if (now - entry.timestamp > this.TTL) {
         this.cache.delete(key);
       }
